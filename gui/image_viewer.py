@@ -7,8 +7,9 @@ import numpy as np
 class ImageViewer(ctk.CTkFrame):
     """Displays original and poisoned images side by side with zoom and difference view."""
 
-    def __init__(self, master, **kwargs):
+    def __init__(self, master, on_open_image=None, **kwargs):
         super().__init__(master, **kwargs)
+        self._on_open_image = on_open_image  # callback when user opens an image from Preview
 
         self.original_image = None
         self.poisoned_image = None
@@ -18,6 +19,14 @@ class ImageViewer(ctk.CTkFrame):
         # Top toolbar
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
         toolbar.pack(fill="x", padx=5, pady=(5, 0))
+
+        # Open Image button
+        self.open_btn = ctk.CTkButton(
+            toolbar, text="Open Image",
+            command=self._handle_open_image, width=110, height=28,
+            font=ctk.CTkFont(size=12)
+        )
+        self.open_btn.pack(side="left", padx=(0, 10))
 
         self.zoom_label = ctk.CTkLabel(toolbar, text="Zoom: 100%", font=ctk.CTkFont(size=12))
         self.zoom_label.pack(side="left", padx=5)
@@ -176,3 +185,16 @@ class ImageViewer(ctk.CTkFrame):
         self.left_label.configure(image=None, text="No image loaded")
         self.right_label.configure(image=None, text="")
         self.quality_label.configure(text="")
+
+    def _handle_open_image(self):
+        """Open a file dialog and load an image directly into the viewer."""
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Open Image",
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.tiff *.tif"),
+                ("All files", "*.*"),
+            ]
+        )
+        if path and self._on_open_image:
+            self._on_open_image(path)

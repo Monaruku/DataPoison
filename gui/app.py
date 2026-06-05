@@ -125,7 +125,7 @@ class App(ctk.CTk):
         preview_tab = self.tabview.add("Preview")
         preview_tab.grid_columnconfigure(0, weight=1)
         preview_tab.grid_rowconfigure(0, weight=1)
-        self.image_viewer = ImageViewer(preview_tab)
+        self.image_viewer = ImageViewer(preview_tab, on_open_image=self._on_preview_open_image)
         self.image_viewer.grid(row=0, column=0, sticky="nsew")
 
         # Batch tab
@@ -148,13 +148,36 @@ class App(ctk.CTk):
                                         "quality metrics (PSNR, SSIM), and any warnings.")
 
     def _build_status_bar(self):
+        # Detect compute device
+        from models.model_loader import get_device
+        device = get_device()
+        if device.type == "cuda":
+            import torch
+            gpu_name = torch.cuda.get_device_name(0)
+            device_text = f"GPU: {gpu_name}"
+            device_color = "#4CAF50"
+        else:
+            device_text = "CPU (install CUDA PyTorch for GPU acceleration)"
+            device_color = "#FF9800"
+
+        status_frame = ctk.CTkFrame(self, fg_color="transparent")
+        status_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 5))
+
         self.status_label = ctk.CTkLabel(
-            self, text="Ready — Add images and select a preset to begin.",
+            status_frame, text="Ready \u2014 Add images and select a preset to begin.",
             font=ctk.CTkFont(size=11),
             text_color=("gray45", "gray60"),
             anchor="w"
         )
-        self.status_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 5))
+        self.status_label.pack(side="left", fill="x", expand=True)
+
+        self.device_label = ctk.CTkLabel(
+            status_frame, text=device_text,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=device_color,
+            anchor="e"
+        )
+        self.device_label.pack(side="right", padx=(10, 0))
 
     # ── Settings Collection ──────────────────────────────────────────────
 
@@ -206,6 +229,28 @@ class App(ctk.CTk):
         return settings
 
     # ── Event Handlers ───────────────────────────────────────────────────
+
+    def _on_preview_open_image(self, path: str):
+        """Handle opening an image directly from the Preview tab."""
+        if not path:
+            return
+        from core.utils import validate_image
+        if not validate_image(path):
+            messagebox.showerror("Invalid Image", f"Cannot open image:\n{path}")
+            return
+
+        # Add to batch panel if not already there
+        if path not in self.batch_panel.file_paths:
+            self.batch_panel.file_paths.append(path)
+            self.batch_panel._refresh_list()
+
+        # Show the image in the preview
+        try:
+            original = Image.open(path).convert("RGB")
+            self.image_viewer.set_images(original)
+            self.status_label.configure(text=f"Loaded: {os.path.basename(path)} — click 'Poison Selected Image' to protect it.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open image:\n{e}")
 
     def _on_technique_change(self):
         pass  # Techniques will be read at processing time

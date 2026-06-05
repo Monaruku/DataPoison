@@ -31,10 +31,11 @@ Generative AI models are trained on billions of images scraped from the internet
 
 ### Requirements
 
-- **Python 3.11 or later** ([download](https://www.python.org/downloads/))
-- **Windows 10/11** (primary target; macOS/Linux may work but are untested)
+- **Python 3.10 or later** ([download](https://www.python.org/downloads/))
+- **Windows 10/11**, macOS, or Linux
+- **8+ GB RAM** recommended
 - **~2.5 GB disk space** for PyTorch and model weights
-- GPU acceleration is optional (CUDA support auto-detected)
+- **NVIDIA GPU** (optional, auto-detected for CUDA acceleration)
 
 ### Setup
 
@@ -42,16 +43,68 @@ Generative AI models are trained on billions of images scraped from the internet
 # Clone or download the repository
 cd DataPoison
 
-# (Optional) Create a virtual environment
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS/Linux
-
-# Install dependencies
-pip install -r requirements.txt
+# Run the setup script
+python setup.py
 ```
 
-> **First run note:** PyTorch (~2 GB) and torchvision are downloaded during `pip install`. Pre-trained model weights (~45 MB for ResNet-18) are downloaded automatically on first use.
+The setup script automatically detects your system and installs optimal dependencies:
+
+| Detected | How It's Used |
+|----------|---------------|
+| **Python version** | Checks 3.10+ compatibility, warns if outdated |
+| **OS & architecture** | Handles platform-specific installs (Windows/macOS/Linux, x86/ARM) |
+| **NVIDIA GPU & VRAM** | Selects correct CUDA build (12.8 for RTX 50xx Blackwell, etc.) |
+| **GPU compute capability** | Maps SM version (sm_120, sm_89, etc.) to CUDA toolkit |
+| **CUDA driver version** | Validates driver supports the selected CUDA toolkit |
+| **System RAM** | Warns if below 8 GB recommended |
+| **Existing packages** | Skips reinstalling up-to-date dependencies, upgrades old ones |
+
+Example output:
+```
+[1/4] Detecting system specs...
+
+  Python:     3.12.10 (AMD64) OK
+  OS:         Windows 10
+  CPU:        Intel Core i9-14900HX (32 cores)
+  RAM:        31.7 GB OK
+  GPU:        NVIDIA GeForce RTX 5070 Laptop GPU
+  VRAM:       8.0 GB
+  Compute:    12.0 (sm_120)
+  Driver:     595.97 (CUDA 12.9)
+
+[2/4] Checking existing dependencies...
+
+  Pillow             12.2.0               OK
+  numpy              2.4.6                OK
+  torch              not installed         WILL INSTALL
+  ...
+
+  PyTorch target: CUDA 12.8
+  Reason: Blackwell architecture (sm_120) requires CUDA 12.8+
+
+[3/4] Installing dependencies...
+[4/4] Verifying installation...
+```
+
+If no GPU is detected, CPU-only PyTorch is installed automatically.
+
+> **First run:** PyTorch (~2.5 GB) and pre-trained model weights (~45 MB) are downloaded during setup.
+
+### Manual Setup (Alternative)
+
+If you prefer to install manually:
+
+```bash
+# Install base dependencies
+pip install -r requirements.txt
+
+# Install PyTorch with CUDA support (choose one):
+# For RTX 50xx (Blackwell) or RTX 40xx/30xx (Ada/Ampere):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+# CPU-only (no GPU):
+pip install torch torchvision
+```
 
 ### Launch
 
