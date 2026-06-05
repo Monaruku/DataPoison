@@ -304,6 +304,36 @@ DataPoison/
 
 Images larger than 4096px on the longest edge are automatically downscaled to prevent out-of-memory errors.
 
+### What DataPoison Protects Against (and What It Doesn't)
+
+A common question: *"I sent my protected image to Gemini/GPT-4V and it could still describe it — does the protection work?"*
+
+**Yes, but it's important to understand the difference between training and inference:**
+
+| | DataPoison Targets | AI Assistants Do |
+|---|---|---|
+| **Stage** | **Training** — when AI *learns* from data | **Inference** — when AI *looks at* an image |
+| **Goal** | Make the image **toxic to learn from** | **Understand** a single image on demand |
+| **How it works** | Poisons gradients during backpropagation | Uses an already-trained model to describe what it sees |
+| **Effect of perturbations** | Corrupts the model's *weights* over time | Barely affects a *single forward pass* |
+
+**Why AI assistants can still "see" your image:**
+
+Multimodal models like Gemini, GPT-4V, and Claude are *already fully trained*. When you send them an image, they run a single forward pass to describe it. The adversarial perturbations DataPoison adds are tiny (ε = 0.001–0.025 per pixel) — far too small to prevent a powerful vision model from recognizing image content during a one-off query. These models are robust to small noise at inference time.
+
+**What DataPoison actually prevents:**
+
+The protection activates when someone **scrapes your image and includes it in a training dataset** to teach an AI model. During training, the model processes thousands of images through backpropagation (gradient updates). The perturbations then:
+
+- **FGSM/Nightshade:** Inject wrong gradients that teach the model incorrect associations
+- **Style Cloak:** Make the model learn a wrong style representation, preventing style replication
+- **HF Noise:** Corrupt the resized/normalized versions the model actually trains on
+- **Compound effect:** Thousands of poisoned images in a dataset accumulate errors, degrading the model's output quality
+
+**The analogy:** Think of it like a slow-acting contaminant in a water supply. Someone taking a single sip (AI inference) won't notice anything wrong. But if a factory (AI training pipeline) uses that water as an ingredient in millions of products (model weights), the contamination accumulates and ruins the output.
+
+**Bottom line:** DataPoison protects against your work being *used as training data* without consent — the core ethical concern. It is not an "invisibility cloak" against already-trained AI assistants analyzing a single image. No current technique achieves that while keeping the image visually identical to human eyes.
+
 ### Protection Limitations
 
 - **Not future-proof:** As with any adversarial technique, future AI architectures may develop countermeasures. DataPoison is most effective against current-generation models.
