@@ -314,6 +314,86 @@ Images larger than 4096px on the longest edge are automatically downscaled to pr
 
 ---
 
+## Glossary of Technical Terms
+
+### Image Quality Metrics
+
+**PSNR (Peak Signal-to-Noise Ratio)**
+A measure of how similar two images are, expressed in decibels (dB). Higher values mean the images are more similar.
+
+| PSNR Range | What It Means |
+|------------|---------------|
+| > 50 dB | Mathematically near-identical — impossible to distinguish |
+| 45–50 dB | Visually identical — no human can tell the difference |
+| 40–45 dB | Very subtle — faint grain may appear on close inspection of flat areas |
+| 30–40 dB | Noticeable — visible artifacts or noise |
+| < 30 dB | Obviously different |
+
+DataPoison uses PSNR as a **quality gate**: after applying all poisoning techniques, it checks whether the protected image still meets the PSNR threshold for the selected preset. If not, it automatically reduces the perturbation strength and retries. This guarantees the output always looks identical to the original.
+
+**SSIM (Structural Similarity Index)**
+A perceptual metric that compares the *structure* of two images — luminance, contrast, and texture — rather than raw pixel values. Ranges from 0 (completely different) to 1 (identical).
+
+| SSIM Range | What It Means |
+|------------|---------------|
+| 0.995–1.0 | Structurally identical to human perception |
+| 0.990–0.995 | Imperceptible structural change |
+| 0.970–0.990 | Very subtle structural shift |
+| < 0.970 | Potentially noticeable |
+
+DataPoison uses SSIM alongside PSNR as a dual quality gate. Both must pass for the output to be accepted. SSIM catches cases where PSNR might pass but the image structure has subtly shifted (e.g., from aggressive style cloaking).
+
+### Perturbation Parameters
+
+**Epsilon (ε)**
+The maximum amount any single pixel can change, expressed as a fraction of the full 0–255 range. This is the primary control for the trade-off between protection strength and visual invisibility.
+
+| Epsilon | Pixel Change (out of 255) | Visual Effect |
+|---------|--------------------------|---------------|
+| 0.001–0.005 | < 1 | Completely invisible |
+| 0.005–0.010 | 1–3 | Invisible to human eyes |
+| 0.010–0.020 | 3–5 | Very faint grain on close inspection |
+| 0.020–0.030 | 5–8 | Subtle grain on flat-color areas |
+| > 0.030 | > 8 | Visible noise texture |
+
+When multiple techniques are enabled, DataPoison automatically divides each technique's epsilon by √(n_enabled) to keep the *total* perturbation within bounds.
+
+**Lambda (λ)**
+The regularization strength used in Style Cloak. Controls how aggressively the optimizer resists changing pixels from the original. Higher lambda (8–10) = less pixel change, more conservative. Lower lambda (2–3) = more aggressive feature-space movement, slightly more pixel change.
+
+**Iterations**
+The number of optimization steps the Style Cloak engine runs. More iterations allow the optimizer to find a better perturbation, but take longer. With strong regularization, even 100 iterations remain invisible.
+
+### AI/ML Terms
+
+**FGSM (Fast Gradient Sign Method)**
+An adversarial attack technique from 2014 (Goodfellow et al.) that computes how a neural network's loss changes with respect to each input pixel, then adds noise in that direction. DataPoison uses FGSM *in reverse*: it finds what perturbation confuses the model most, then adds it invisibly to the image.
+
+**Surrogate Model**
+A pre-trained AI model (ResNet-18 or VGG-16) that DataPoison uses locally to *compute* perturbations. The perturbations calculated against this model **transfer** to other AI architectures (including diffusion models) due to a well-documented property called *adversarial transferability*. No images leave your machine.
+
+**Feature Space**
+The internal representation an AI model creates when it "looks" at an image. Two images that look different to humans might be close in feature space (e.g., two watercolor paintings), while two images that look similar to humans might be far apart in feature space. Style Cloak works by pushing your image far away in feature space while keeping it identical in pixel space.
+
+**Adversarial Transferability**
+The phenomenon where perturbations designed to fool one AI model also fool *other*, different AI models. This is why DataPoison only needs a small surrogate model (ResNet-18) to create perturbations that disrupt much larger models like Stable Diffusion, DALL-E, or Midjourney.
+
+### Data Poisoning Terms
+
+**LSB (Least Significant Bit)**
+The lowest bit in each byte of pixel data. Changing only the LSB alters pixel values by at most 1 out of 255 — completely invisible to human vision. DataPoison embeds the text "DATAPOISON" in the LSBs as an invisible watermark that survives lossless formats.
+
+**EXIF (Exchangeable Image File Format)**
+Metadata embedded in image files: camera model, GPS coordinates, timestamps, software used, etc. DataPoison strips original EXIF data and replaces it with misleading fields ("Software: DataPoison v1.0", copyright warnings) to confuse data scraping pipelines.
+
+**Moire Pattern**
+An interference pattern created by overlapping regular grids. DataPoison generates moire patterns at specific frequencies (7, 9, 11 pixel periods) that are invisible at native resolution but create artifacts when AI models resize images to standard input sizes (224×224, 512×512).
+
+**Quality Gate**
+An automatic checkpoint that validates the protected image meets the invisibility requirements (PSNR and SSIM thresholds). If the gate fails, DataPoison halves all epsilon values and retries up to 2 times. This ensures you never accidentally produce a visibly altered image.
+
+---
+
 ## License
 
 This project is provided for educational and ethical protection purposes. Use responsibly to protect your own creative works from unauthorized AI training.

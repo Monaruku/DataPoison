@@ -338,6 +338,7 @@ class App(ctk.CTk):
 
     def _process_batch(self, paths: list, settings: PoisonSettings):
         """Worker: process all images in batch."""
+        total = len(paths)
         for i, path in enumerate(paths):
             if self._cancel_event.is_set():
                 self._result_queue.put(("cancelled", path, None))
@@ -347,16 +348,19 @@ class App(ctk.CTk):
                 self._result_queue.put(("skip_error", path, "Invalid image file"))
                 continue
 
-            self._result_queue.put(("progress", i, f"{i+1}/{len(paths)}: {os.path.basename(path)}"))
+            # Mark file as "Processing" and update progress bar
+            self._result_queue.put(("file_processing", path, None))
+            self._result_queue.put(("progress", i, f"{os.path.basename(path)}"))
 
             try:
                 original = Image.open(path).convert("RGB")
                 result = self.engine.process_image(original, settings)
                 self._result_queue.put(("batch_done", path, result))
+                self._result_queue.put(("progress", i + 1, f"{os.path.basename(path)}"))
             except Exception as e:
                 self._result_queue.put(("error", path, str(e)))
 
-        self._result_queue.put(("batch_complete", None, None))
+        self._result_queue.put(("batch_complete", total, None))
 
     def _poll_result_queue(self):
         """Poll the result queue and update GUI on the main thread."""
@@ -379,15 +383,19 @@ class App(ctk.CTk):
                     self.poison_all_btn.configure(state="normal")
                     self._update_report(path, result)
 
+                elif msg_type == "file_processing":
+                    path = data1
+                    self.batch_panel.set_file_status(path, "Processing...", "#FF9800")
+
                 elif msg_type == "batch_done":
                     path, result = data1, data2
                     self.results[path] = result
                     self.batch_panel.set_file_status(path, "Done", "#4CAF50")
 
                 elif msg_type == "progress":
-                    idx, message = data1, data2
+                    idx, filename = data1, data2
                     total = len(self.batch_panel.file_paths)
-                    self.batch_panel.update_progress(idx + 1, total, message)
+                    self.batch_panel.update_progress(idx, total, filename)
 
                 elif msg_type == "error":
                     path, error_msg = data1, data2
@@ -403,13 +411,11 @@ class App(ctk.CTk):
                     self.batch_panel.set_file_status(data1, "Cancelled", "#FF9800")
 
                 elif msg_type == "batch_complete":
+                    total = data1 or len(self.batch_panel.file_paths)
                     self.status_label.configure(
                         text=f"Batch complete! {len(self.results)} image(s) processed."
                     )
-                    self.batch_panel.update_progress(
-                        len(self.batch_panel.file_paths),
-                        len(self.batch_panel.file_paths)
-                    )
+                    self.batch_panel.update_progress(total, total, "Complete")
                     self.poison_btn.configure(state="normal")
                     self.poison_all_btn.configure(state="normal", text="Poison All Images")
                     self.save_btn.configure(state="normal")
