@@ -266,9 +266,10 @@ class PoisonEngine:
             )
             applied.append(applied_metadata)
 
-        # Final quality report
+        # Final quality report — ensure both tensors are on the same device
+        poisoned_tensor_final = pil_to_tensor(poisoned_pil).to(self._device)
         final_quality = check_quality(
-            original_tensor, pil_to_tensor(poisoned_pil),
+            original_tensor, poisoned_tensor_final,
             psnr_threshold=settings.quality_gate_psnr,
             ssim_threshold=settings.quality_gate_ssim,
         )

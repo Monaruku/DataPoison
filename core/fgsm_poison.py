@@ -12,12 +12,15 @@ The gradient is computed w.r.t. the INPUT pixels (model weights are frozen).
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
 
 from core.utils import IMAGENET_MEAN, IMAGENET_STD
 
-# ImageNet normalization transform
-_normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+
+def _normalize_on_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """Apply ImageNet normalization with mean/std explicitly on the target device."""
+    mean = torch.tensor(IMAGENET_MEAN, device=device).view(1, 3, 1, 1)
+    std = torch.tensor(IMAGENET_STD, device=device).view(1, 3, 1, 1)
+    return (tensor - mean) / std
 
 
 def apply_fgsm(
@@ -45,8 +48,8 @@ def apply_fgsm(
     # Work on a clone with gradient tracking enabled
     data = image_tensor.clone().detach().to(device).requires_grad_(True)
 
-    # Forward pass with ImageNet normalization
-    normalized = _normalize(data.squeeze(0)).unsqueeze(0)
+    # Forward pass with ImageNet normalization (device-aware)
+    normalized = _normalize_on_device(data, device)
     output = model(normalized)
 
     # Use the model's own top-1 prediction as the class to disrupt

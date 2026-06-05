@@ -15,11 +15,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
 
 from core.utils import IMAGENET_MEAN, IMAGENET_STD
 
-_normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+
+def _normalize_on_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """Apply ImageNet normalization with mean/std explicitly on the target device."""
+    mean = torch.tensor(IMAGENET_MEAN, device=device).view(1, 3, 1, 1)
+    std = torch.tensor(IMAGENET_STD, device=device).view(1, 3, 1, 1)
+    return (tensor - mean) / std
 
 
 def _compute_psnr(original: torch.Tensor, perturbed: torch.Tensor) -> float:
@@ -45,7 +49,7 @@ def _get_feature_hook(model: nn.Module, layer_name: str = "layer3"):
 
     def extract(x: torch.Tensor) -> torch.Tensor:
         features.clear()
-        model(_normalize(x.squeeze(0)).unsqueeze(0))
+        model(_normalize_on_device(x, x.device))
         return features.get("out")
 
     return extract, handle.remove

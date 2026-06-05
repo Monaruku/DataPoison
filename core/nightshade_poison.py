@@ -14,11 +14,15 @@ Multiple semantically distant targets can be applied in sequence.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
 
 from core.utils import IMAGENET_MEAN, IMAGENET_STD
 
-_normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+
+def _normalize_on_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """Apply ImageNet normalization with mean/std explicitly on the target device."""
+    mean = torch.tensor(IMAGENET_MEAN, device=device).view(1, 3, 1, 1)
+    std = torch.tensor(IMAGENET_STD, device=device).view(1, 3, 1, 1)
+    return (tensor - mean) / std
 
 # Semantic clusters of ImageNet classes (indices).
 # We pick representative classes from very different semantic groups
@@ -48,7 +52,7 @@ DISTANT_PAIRS = {
 
 def _classify(model: nn.Module, image_tensor: torch.Tensor, device: torch.device):
     """Return the top-1 predicted class index for the image."""
-    normalized = _normalize(image_tensor.squeeze(0)).unsqueeze(0).to(device)
+    normalized = _normalize_on_device(image_tensor, device)
     with torch.no_grad():
         output = model(normalized)
     return output.argmax(dim=1).item()
@@ -96,7 +100,7 @@ def _targeted_fgsm_step(
 ) -> torch.Tensor:
     """Single targeted FGSM step: pull image toward target_class."""
     data = image_tensor.clone().detach().to(device).requires_grad_(True)
-    normalized = _normalize(data.squeeze(0)).unsqueeze(0)
+    normalized = _normalize_on_device(data, device)
     output = model(normalized)
 
     target_tensor = torch.tensor([target_class], device=device)
