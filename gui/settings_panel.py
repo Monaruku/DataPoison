@@ -188,6 +188,20 @@ class SettingsPanel(ctk.CTkScrollableFrame):
         )
         self._controls["model_name"].pack(side="right")
 
+        # Quality gate toggle
+        qg_frame = ctk.CTkFrame(self, fg_color="transparent")
+        qg_frame.pack(fill="x", padx=5, pady=(4, 2))
+        self._controls["quality_gate_enabled"] = ctk.CTkSwitch(
+            qg_frame, text="Quality Gate (auto-reduce if visible)",
+            font=ctk.CTkFont(size=12),
+            command=lambda: self._on_param_change(
+                "quality_gate_enabled",
+                self._controls["quality_gate_enabled"].get()
+            )
+        )
+        self._controls["quality_gate_enabled"].select()  # ON by default
+        self._controls["quality_gate_enabled"].pack(anchor="w", padx=2)
+
     # ── Trade-off Bar ────────────────────────────────────────────────────
 
     def _build_tradeoff_bar(self):
@@ -374,6 +388,12 @@ class SettingsPanel(ctk.CTkScrollableFrame):
         if "model_name" in self._controls:
             self._controls["model_name"].set(preset.get("model_name", "resnet18"))
 
+        if "quality_gate_enabled" in self._controls:
+            if preset.get("quality_gate_enabled", True):
+                self._controls["quality_gate_enabled"].select()
+            else:
+                self._controls["quality_gate_enabled"].deselect()
+
         self._suppress_callback = False
 
     def _update_tradeoff(self):
@@ -435,6 +455,8 @@ class SettingsPanel(ctk.CTkScrollableFrame):
             d["output_format"] = self._controls["output_format"].get()
         if "model_name" in self._controls:
             d["model_name"] = self._controls["model_name"].get()
+        if "quality_gate_enabled" in self._controls:
+            d["quality_gate_enabled"] = bool(self._controls["quality_gate_enabled"].get())
 
         d["preset"] = self.preset_var.get()
         return d

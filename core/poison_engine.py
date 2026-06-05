@@ -66,6 +66,7 @@ class PoisonSettings:
     multi_pass: bool = False
 
     # Quality gate
+    quality_gate_enabled: bool = True
     quality_gate_psnr: float = 45.0
     quality_gate_ssim: float = 0.99
 
@@ -147,7 +148,7 @@ class PoisonEngine:
                 num_iterations=settings.style_cloak_iterations,
                 style_target=settings.style_cloak_target,
                 device=self._device,
-                min_psnr=settings.quality_gate_psnr,
+                min_psnr=settings.quality_gate_psnr if settings.quality_gate_enabled else 0.0,
             )
             applied.append("Style Cloak")
 
@@ -209,43 +210,54 @@ class PoisonEngine:
         # Load model
         model = self._get_model(settings.model_name)
 
-        # Apply techniques with quality gate retry
+        # Apply techniques with optional quality gate retry
         retries = 0
         current_settings = settings
         perturbed_tensor = None
         applied = []
 
-        for attempt in range(MAX_RETRIES + 1):
+        if not settings.quality_gate_enabled:
+            # Bypass quality gate — apply once, no retry
             if progress_callback:
-                progress_callback(0.1, f"Applying techniques (attempt {attempt + 1})...")
-
+                progress_callback(0.1, "Applying techniques (quality gate bypassed)...")
             perturbed_tensor, applied = self._apply_techniques(
                 image_tensor, current_settings, model
             )
-
-            # Quality gate check
-            quality = check_quality(
-                original_tensor, perturbed_tensor,
-                psnr_threshold=current_settings.quality_gate_psnr,
-                ssim_threshold=current_settings.quality_gate_ssim,
+            warnings.append(
+                "Quality gate was bypassed. Output may have visible artifacts."
             )
+        else:
+            for attempt in range(MAX_RETRIES + 1):
+                if progress_callback:
+                    progress_callback(0.1, f"Applying techniques (attempt {attempt + 1})...")
 
-            if quality["passed"]:
-                break
+                perturbed_tensor, applied = self._apply_techniques(
+                    image_tensor, current_settings, model
+                )
 
-            if attempt < MAX_RETRIES:
-                retries += 1
-                warnings.append(
-                    f"Quality gate failed (PSNR={quality['psnr']}dB, SSIM={quality['ssim']}). "
-                    f"Reducing parameters by 50% and retrying..."
+                # Quality gate check
+                quality = check_quality(
+                    original_tensor, perturbed_tensor,
+                    psnr_threshold=current_settings.quality_gate_psnr,
+                    ssim_threshold=current_settings.quality_gate_ssim,
                 )
-                reduced = reduce_settings_for_retry(current_settings.to_dict())
-                current_settings = PoisonSettings(**reduced)
-            else:
-                warnings.append(
-                    f"Quality gate: PSNR={quality['psnr']}dB, SSIM={quality['ssim']} after "
-                    f"{MAX_RETRIES} retries. Protection was weakened to maintain invisibility."
-                )
+
+                if quality["passed"]:
+                    break
+
+                if attempt < MAX_RETRIES:
+                    retries += 1
+                    warnings.append(
+                        f"Quality gate failed (PSNR={quality['psnr']}dB, SSIM={quality['ssim']}). "
+                        f"Reducing parameters by 50% and retrying..."
+                    )
+                    reduced = reduce_settings_for_retry(current_settings.to_dict())
+                    current_settings = PoisonSettings(**reduced)
+                else:
+                    warnings.append(
+                        f"Quality gate: PSNR={quality['psnr']}dB, SSIM={quality['ssim']} after "
+                        f"{MAX_RETRIES} retries. Protection was weakened to maintain invisibility."
+                    )
 
         # Convert back to PIL
         poisoned_pil = tensor_to_pil(perturbed_tensor)

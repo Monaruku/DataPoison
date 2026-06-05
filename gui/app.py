@@ -223,6 +223,7 @@ class App(ctk.CTk):
             output_format=params.get("output_format", "png"),
             model_name=params.get("model_name", "resnet18"),
             multi_pass=params.get("multi_pass", False),
+            quality_gate_enabled=params.get("quality_gate_enabled", True),
             quality_gate_psnr=PRESETS.get(preset_name, PRESETS["moderate"]).get("quality_gate_psnr", 45.0),
             quality_gate_ssim=PRESETS.get(preset_name, PRESETS["moderate"]).get("quality_gate_ssim", 0.99),
         )
