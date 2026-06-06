@@ -12,6 +12,14 @@ TECHNIQUE_INFO = [
         ),
     },
     {
+        "key": "pgd",
+        "name": "Iterative Perturbation (PGD)",
+        "description": (
+            "Multiple small gradient steps that follow the loss curvature for stronger, "
+            "more transferable perturbations. Superior cross-model protection."
+        ),
+    },
+    {
         "key": "style_cloak",
         "name": "Style Cloak (Glaze-style)",
         "description": (
@@ -33,6 +41,14 @@ TECHNIQUE_INFO = [
         "description": (
             "Ultra-low-amplitude structured noise at frequencies beyond human perception "
             "but disruptive to AI preprocessing. Lightweight and fast."
+        ),
+    },
+    {
+        "key": "visual_masking",
+        "name": "Adaptive Region Scaling",
+        "description": (
+            "Allocates more perturbation to textured areas where it's invisible and less to "
+            "smooth regions. Force multiplier for all gradient-based techniques."
         ),
     },
     {

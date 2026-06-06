@@ -16,9 +16,12 @@ class SettingsPanel(ctk.CTkScrollableFrame):
 
         self._build_preset_selector()
         self._build_fgsm_section()
+        self._build_pgd_section()
         self._build_style_cloak_section()
         self._build_nightshade_section()
         self._build_noise_section()
+        self._build_visual_masking_section()
+        self._build_ensemble_section()
         self._build_metadata_section()
         self._build_common_section()
         self._build_tradeoff_bar()
@@ -62,6 +65,15 @@ class SettingsPanel(ctk.CTkScrollableFrame):
         self._section_header("FGSM Adversarial Noise")
         self._add_slider("fgsm_epsilon", "Perturbation Strength (epsilon)",
                          0.001, 0.05, 0.001, 0.01)
+
+    # ── PGD Section ──────────────────────────────────────────────────────
+
+    def _build_pgd_section(self):
+        self._section_header("PGD Iterative Perturbation")
+        self._add_slider("pgd_epsilon", "Perturbation Strength (epsilon)",
+                         0.001, 0.05, 0.001, 0.01)
+        self._add_slider("pgd_steps", "Gradient Steps",
+                         2, 30, 1, 10)
 
     # ── Style Cloak Section ──────────────────────────────────────────────
 
@@ -129,6 +141,41 @@ class SettingsPanel(ctk.CTkScrollableFrame):
         self._controls["noise_moire"].select()
         self._controls["noise_moire"].pack(side="left", padx=5)
 
+    # ── Visual Masking Section ──────────────────────────────────────────────
+
+    def _build_visual_masking_section(self):
+        self._section_header("Adaptive Region Scaling")
+        self._add_slider("visual_masking_strength", "Min Region Weight",
+                         0.05, 0.8, 0.05, 0.3)
+
+    # ── Ensemble Section ──────────────────────────────────────────────────
+
+    def _build_ensemble_section(self):
+        self._section_header("Ensemble Models")
+
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.pack(fill="x", padx=5, pady=2)
+        self._controls["ensemble_enabled"] = ctk.CTkSwitch(
+            frame, text="Enable multi-model ensemble",
+            font=ctk.CTkFont(size=12),
+            command=lambda: self._on_param_change(
+                "ensemble_enabled",
+                self._controls["ensemble_enabled"].get()
+            )
+        )
+        self._controls["ensemble_enabled"].pack(anchor="w", padx=5, pady=1)
+
+        # Ensemble model count selector
+        ens_frame = ctk.CTkFrame(self, fg_color="transparent")
+        ens_frame.pack(fill="x", padx=5, pady=2)
+        ctk.CTkLabel(ens_frame, text="Models", font=ctk.CTkFont(size=12)).pack(side="left", padx=2)
+        self._controls["ensemble_count"] = ctk.CTkOptionMenu(
+            ens_frame, values=["2 models", "3 models"],
+            command=lambda v: self._on_param_change("ensemble_count", v),
+            width=120, font=ctk.CTkFont(size=12)
+        )
+        self._controls["ensemble_count"].pack(side="right")
+
     # ── Metadata Section ─────────────────────────────────────────────────
 
     def _build_metadata_section(self):
@@ -182,7 +229,7 @@ class SettingsPanel(ctk.CTkScrollableFrame):
         frame2.pack(fill="x", padx=5, pady=2)
         ctk.CTkLabel(frame2, text="Model", font=ctk.CTkFont(size=12)).pack(side="left", padx=2)
         self._controls["model_name"] = ctk.CTkOptionMenu(
-            frame2, values=["resnet18", "vgg16"],
+            frame2, values=["resnet18", "vgg16", "mobilenet", "efficientnet"],
             command=lambda v: self._on_param_change("model_name", v),
             width=120, font=ctk.CTkFont(size=12)
         )
@@ -325,12 +372,15 @@ class SettingsPanel(ctk.CTkScrollableFrame):
 
         slider_map = {
             "fgsm_epsilon": preset.get("fgsm_epsilon", 0.01),
+            "pgd_epsilon": preset.get("pgd_epsilon", 0.01),
+            "pgd_steps": preset.get("pgd_steps", 10),
             "style_cloak_epsilon": preset.get("style_cloak_epsilon", 0.008),
             "style_cloak_lambda": preset.get("style_cloak_lambda", 5.0),
             "style_cloak_iterations": preset.get("style_cloak_iterations", 40),
             "nightshade_epsilon": preset.get("nightshade_epsilon", 0.01),
             "nightshade_targets": preset.get("nightshade_targets", 2),
             "noise_amplitude": preset.get("noise_amplitude", 0.008),
+            "visual_masking_strength": preset.get("visual_masking_strength", 0.3),
         }
 
         for key, value in slider_map.items():
@@ -394,6 +444,18 @@ class SettingsPanel(ctk.CTkScrollableFrame):
             else:
                 self._controls["quality_gate_enabled"].deselect()
 
+        if "ensemble_enabled" in self._controls:
+            if preset.get("ensemble_enabled", False):
+                self._controls["ensemble_enabled"].select()
+            else:
+                self._controls["ensemble_enabled"].deselect()
+
+        ens_models = preset.get("ensemble_models", ["resnet18", "mobilenet"])
+        if "ensemble_count" in self._controls:
+            self._controls["ensemble_count"].set(
+                "3 models" if len(ens_models) >= 3 else "2 models"
+            )
+
         self._suppress_callback = False
 
     def _update_tradeoff(self):
@@ -421,9 +483,10 @@ class SettingsPanel(ctk.CTkScrollableFrame):
         """Collect all current parameter values as a dict."""
         d = {}
         slider_keys = [
-            "fgsm_epsilon", "style_cloak_epsilon", "style_cloak_lambda",
+            "fgsm_epsilon", "pgd_epsilon", "pgd_steps",
+            "style_cloak_epsilon", "style_cloak_lambda",
             "style_cloak_iterations", "nightshade_epsilon", "nightshade_targets",
-            "noise_amplitude",
+            "noise_amplitude", "visual_masking_strength",
         ]
         for key in slider_keys:
             if key in self._controls:
@@ -457,6 +520,20 @@ class SettingsPanel(ctk.CTkScrollableFrame):
             d["model_name"] = self._controls["model_name"].get()
         if "quality_gate_enabled" in self._controls:
             d["quality_gate_enabled"] = bool(self._controls["quality_gate_enabled"].get())
+
+        # Ensemble settings
+        if "ensemble_enabled" in self._controls:
+            d["ensemble_enabled"] = bool(self._controls["ensemble_enabled"].get())
+        if "ensemble_count" in self._controls:
+            count_str = self._controls["ensemble_count"].get()
+            count = 3 if "3" in count_str else 2
+            if count >= 3:
+                d["ensemble_models"] = ["resnet18", "mobilenet", "efficientnet"]
+            else:
+                d["ensemble_models"] = ["resnet18", "mobilenet"]
+
+        # Visual masking is read from the technique panel toggle
+        # (visual_masking_enabled is set from technique_panel.get_enabled())
 
         d["preset"] = self.preset_var.get()
         return d

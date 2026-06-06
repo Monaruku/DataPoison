@@ -138,10 +138,17 @@ class BatchPanel(ctk.CTkFrame):
     def update_progress(self, current: int, total: int, filename: str = ""):
         """Update progress bar and label during batch processing."""
         if total > 0:
-            fraction = current / total
+            # Show partial progress for the file currently being processed
+            # current = files completed, so add 0.5 to show mid-processing
+            is_processing = "Processing" in filename or "Applying" in filename
+            if is_processing and current < total:
+                fraction = (current + 0.5) / total
+            else:
+                fraction = current / total
+            fraction = max(0.0, min(1.0, fraction))
             self.progress_bar.set(fraction)
             self.progress_label.configure(
-                text=f"Processing {current}/{total}... {filename}"
+                text=f"[{current}/{total}] {filename}"
             )
         else:
             self.progress_bar.set(0)

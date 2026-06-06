@@ -1,5 +1,5 @@
 """Lazy-loading and caching for pre-trained torchvision models."""
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -31,8 +31,12 @@ def get_model(name: str = "resnet18", device: Optional[torch.device] = None) -> 
         model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
     elif name == "vgg16":
         model = models.vgg16(weights=models.VGG16_Weights.DEFAULT)
+    elif name == "mobilenet":
+        model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
+    elif name == "efficientnet":
+        model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
     else:
-        raise ValueError(f"Unknown model: {name}. Supported: resnet18, vgg16")
+        raise ValueError(f"Unknown model: {name}. Supported: resnet18, vgg16, mobilenet, efficientnet")
 
     model = model.to(device)
     model.eval()

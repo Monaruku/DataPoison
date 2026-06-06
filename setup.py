@@ -345,7 +345,7 @@ def install_pytorch(dep_status: dict, pytorch_config: dict):
 
 def verify_install():
     """Verify all dependencies and report status."""
-    print("\n[4/4] Verifying installation...\n")
+    print("\n[4/5] Verifying installation...\n")
 
     verify_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_verify_install.py")
     with open(verify_script, "w") as f:
@@ -400,6 +400,58 @@ else:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Model Pre-Download
+# ─────────────────────────────────────────────────────────────────────────
+
+def download_models():
+    """Pre-download all surrogate model weights so they're available offline."""
+    print("\n[5/5] Pre-downloading surrogate models...\n")
+
+    download_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_download_models.py")
+    with open(download_script, "w") as f:
+        f.write("""
+import sys
+import os
+
+MODELS = {
+    "ResNet-18":    lambda: __import__('torchvision').models.resnet18(
+                        weights=__import__('torchvision').models.ResNet18_Weights.DEFAULT),
+    "MobileNet-V2":  lambda: __import__('torchvision').models.mobilenet_v2(
+                        weights=__import__('torchvision').models.MobileNet_V2_Weights.DEFAULT),
+    "EfficientNet-B0": lambda: __import__('torchvision').models.efficientnet_b0(
+                        weights=__import__('torchvision').models.EfficientNet_B0_Weights.DEFAULT),
+}
+
+all_ok = True
+for name, loader in MODELS.items():
+    try:
+        print(f"  {name:<20s} ", end="", flush=True)
+        model = loader()
+        # Get approximate size from param count
+        params = sum(p.numel() for p in model.parameters())
+        size_mb = params * 4 / 1e6  # ~4 bytes per float32 param
+        print(f"OK ({size_mb:.0f} MB)")
+        del model
+    except Exception as e:
+        print(f"FAILED ({e})")
+        all_ok = False
+
+if all_ok:
+    print("\\n  All models downloaded successfully.")
+else:
+    print("\\n  WARNING: Some models failed to download.")
+    print("  They will be retried on first use when launching the app.")
+""")
+
+    run(f"{sys.executable} {download_script}")
+
+    try:
+        os.remove(download_script)
+    except OSError:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -410,7 +462,7 @@ def main():
     print("=" * 62)
 
     # ── Step 1: System Detection ─────────────────────────────────────
-    print("\n[1/4] Detecting system specs...\n")
+    print("\n[1/5] Detecting system specs...\n")
 
     system = detect_system()
     hardware = detect_hardware()
@@ -451,7 +503,7 @@ def main():
         print("  GPU:        None detected (CPU mode)")
 
     # ── Step 2: Dependency Check ─────────────────────────────────────
-    print("\n[2/4] Checking existing dependencies...\n")
+    print("\n[2/5] Checking existing dependencies...\n")
 
     dep_status = check_dependencies()
     for import_name, info in dep_status.items():
@@ -468,7 +520,7 @@ def main():
     print(f"  Reason: {pytorch_config['reason']}")
 
     # ── Step 3: Install ──────────────────────────────────────────────
-    print("\n[3/4] Installing dependencies...\n")
+    print("\n[3/5] Installing dependencies...\n")
 
     print("  Base packages:")
     install_base_deps(dep_status)
@@ -478,6 +530,9 @@ def main():
 
     # ── Step 4: Verify ───────────────────────────────────────────────
     verify_install()
+
+    # ── Step 5: Pre-download models ───────────────────────────────────
+    download_models()
 
     # ── Done ─────────────────────────────────────────────────────────
     print("\n" + "=" * 62)

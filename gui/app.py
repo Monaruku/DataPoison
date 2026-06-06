@@ -189,10 +189,12 @@ class App(ctk.CTk):
             # Override with technique panel enable/disable
             enabled = self.technique_panel.get_enabled()
             settings.fgsm_enabled = enabled.get("fgsm", True)
+            settings.pgd_enabled = enabled.get("pgd", True)
             settings.style_cloak_enabled = enabled.get("style_cloak", True)
             settings.nightshade_enabled = enabled.get("nightshade", True)
             settings.noise_enabled = enabled.get("noise", True)
             settings.metadata_enabled = enabled.get("metadata", True)
+            settings.visual_masking_enabled = enabled.get("visual_masking", False)
             return settings
 
         # Custom: read from settings panel
@@ -205,6 +207,9 @@ class App(ctk.CTk):
             preset="custom",
             fgsm_enabled=enabled.get("fgsm", True),
             fgsm_epsilon=params.get("fgsm_epsilon", 0.01),
+            pgd_enabled=enabled.get("pgd", True),
+            pgd_epsilon=params.get("pgd_epsilon", 0.01),
+            pgd_steps=int(params.get("pgd_steps", 10)),
             style_cloak_enabled=enabled.get("style_cloak", True),
             style_cloak_epsilon=params.get("style_cloak_epsilon", 0.008),
             style_cloak_lambda=params.get("style_cloak_lambda", 5.0),
@@ -217,12 +222,15 @@ class App(ctk.CTk):
             noise_amplitude=params.get("noise_amplitude", 0.008),
             noise_patterns_enabled=noise_patterns,
             metadata_enabled=enabled.get("metadata", True),
+            visual_masking_enabled=enabled.get("visual_masking", False),
             metadata_strip_exif=params.get("metadata_strip_exif", True),
             metadata_watermark=params.get("metadata_watermark", True),
             metadata_watermark_depth=params.get("metadata_watermark_depth", 1),
             output_format=params.get("output_format", "png"),
             model_name=params.get("model_name", "resnet18"),
             multi_pass=params.get("multi_pass", False),
+            ensemble_enabled=params.get("ensemble_enabled", False),
+            ensemble_models=params.get("ensemble_models", ["resnet18", "mobilenet"]),
             quality_gate_enabled=params.get("quality_gate_enabled", True),
             quality_gate_psnr=PRESETS.get(preset_name, PRESETS["moderate"]).get("quality_gate_psnr", 45.0),
             quality_gate_ssim=PRESETS.get(preset_name, PRESETS["moderate"]).get("quality_gate_ssim", 0.99),
@@ -332,45 +340,79 @@ class App(ctk.CTk):
     def _process_single(self, path: str, original: Image.Image, settings: PoisonSettings):
         """Worker: process a single image."""
         try:
-            result = self.engine.process_image(original, settings)
+            filename = os.path.basename(path)
+            print(f"[DataPoison] Processing: {filename}")
+            self._result_queue.put(("progress", 0, 1, f"Processing {filename}..."))
+
+            def stage_callback(fraction, message):
+                """Forward engine stage updates to the GUI and console."""
+                print(f"[DataPoison]   {message}")
+                self._result_queue.put(("stage_progress", fraction, message))
+
+            result = self.engine.process_image(
+                original, settings, progress_callback=stage_callback
+            )
+            self._result_queue.put(("progress", 1, 1, f"Done: {filename}"))
             self._result_queue.put(("single_done", path, result))
+            print(f"[DataPoison] Complete: {filename} "
+                  f"(PSNR={result.quality_report['psnr']}dB, "
+                  f"{result.processing_time_ms:.0f}ms)")
         except Exception as e:
             self._result_queue.put(("error", path, str(e)))
+            print(f"[DataPoison] ERROR: {os.path.basename(path)}: {e}")
 
     def _process_batch(self, paths: list, settings: PoisonSettings):
         """Worker: process all images in batch."""
         total = len(paths)
+        print(f"[DataPoison] Starting batch processing: {total} image(s)")
         for i, path in enumerate(paths):
             if self._cancel_event.is_set():
                 self._result_queue.put(("cancelled", path, None))
+                print(f"[DataPoison] Batch cancelled.")
                 break
 
             if not validate_image(path):
                 self._result_queue.put(("skip_error", path, "Invalid image file"))
+                print(f"[DataPoison] Skipping invalid file: {os.path.basename(path)}")
                 continue
 
-            # Mark file as "Processing" and update progress bar
+            filename = os.path.basename(path)
+            # Mark file as "Processing" and update progress bar (1-based)
             self._result_queue.put(("file_processing", path, None))
-            self._result_queue.put(("progress", i, f"{os.path.basename(path)}"))
+            self._result_queue.put(("progress", i, total, f"Processing {filename}..."))
 
             try:
+                print(f"[DataPoison] [{i+1}/{total}] Processing: {filename}")
+
+                def stage_callback(fraction, message):
+                    """Forward engine stage updates to GUI and console."""
+                    print(f"[DataPoison]   {message}")
+                    self._result_queue.put(("stage_progress", fraction, message))
+
                 original = Image.open(path).convert("RGB")
-                result = self.engine.process_image(original, settings)
+                result = self.engine.process_image(
+                    original, settings, progress_callback=stage_callback
+                )
                 self._result_queue.put(("batch_done", path, result))
-                self._result_queue.put(("progress", i + 1, f"{os.path.basename(path)}"))
+                self._result_queue.put(("progress", i + 1, total, f"Done: {filename}"))
+                print(f"[DataPoison] [{i+1}/{total}] Complete: {filename} "
+                      f"(PSNR={result.quality_report['psnr']}dB)")
             except Exception as e:
                 self._result_queue.put(("error", path, str(e)))
+                print(f"[DataPoison] [{i+1}/{total}] ERROR: {filename}: {e}")
 
+        print(f"[DataPoison] Batch complete: {total} image(s) processed.")
         self._result_queue.put(("batch_complete", total, None))
 
     def _poll_result_queue(self):
         """Poll the result queue and update GUI on the main thread."""
         try:
             while True:
-                msg_type, data1, data2 = self._result_queue.get_nowait()
+                msg = self._result_queue.get_nowait()
+                msg_type = msg[0]
 
                 if msg_type == "single_done":
-                    path, result = data1, data2
+                    path, result = msg[1], msg[2]
                     self.results[path] = result
                     self.image_viewer.set_images(
                         result.original, result.poisoned, result.quality_report
@@ -385,34 +427,42 @@ class App(ctk.CTk):
                     self._update_report(path, result)
 
                 elif msg_type == "file_processing":
-                    path = data1
+                    path = msg[1]
                     self.batch_panel.set_file_status(path, "Processing...", "#FF9800")
 
                 elif msg_type == "batch_done":
-                    path, result = data1, data2
+                    path, result = msg[1], msg[2]
                     self.results[path] = result
                     self.batch_panel.set_file_status(path, "Done", "#4CAF50")
 
                 elif msg_type == "progress":
-                    idx, filename = data1, data2
-                    total = len(self.batch_panel.file_paths)
-                    self.batch_panel.update_progress(idx, total, filename)
+                    # Format: ("progress", current, total, filename)
+                    current, total, filename = msg[1], msg[2], msg[3]
+                    self.batch_panel.update_progress(current, total, filename)
+                    self.status_label.configure(
+                        text=f"[{current}/{total}] {filename}"
+                    )
+
+                elif msg_type == "stage_progress":
+                    # Format: ("stage_progress", fraction, message)
+                    fraction, message = msg[1], msg[2]
+                    self.status_label.configure(text=message)
 
                 elif msg_type == "error":
-                    path, error_msg = data1, data2
+                    path, error_msg = msg[1], msg[2]
                     self.batch_panel.set_file_status(path, "Error", "#F44336")
                     self.status_label.configure(text=f"Error processing {os.path.basename(path)}: {error_msg}")
 
                 elif msg_type == "skip_error":
-                    path, reason = data1, data2
+                    path, reason = msg[1], msg[2]
                     self.batch_panel.set_file_status(path, "Skipped", "#FF9800")
 
                 elif msg_type == "cancelled":
                     self.status_label.configure(text="Processing cancelled.")
-                    self.batch_panel.set_file_status(data1, "Cancelled", "#FF9800")
+                    self.batch_panel.set_file_status(msg[1], "Cancelled", "#FF9800")
 
                 elif msg_type == "batch_complete":
-                    total = data1 or len(self.batch_panel.file_paths)
+                    total = msg[1] or len(self.batch_panel.file_paths)
                     self.status_label.configure(
                         text=f"Batch complete! {len(self.results)} image(s) processed."
                     )

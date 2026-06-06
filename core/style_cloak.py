@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Union, List
 
 from core.utils import IMAGENET_MEAN, IMAGENET_STD
 
@@ -80,7 +81,7 @@ def _generate_style_target(
 
 def apply_style_cloak(
     image_tensor: torch.Tensor,
-    model: nn.Module,
+    model: Union[nn.Module, List[nn.Module]],
     epsilon: float = 0.008,
     lam: float = 5.0,
     num_iterations: int = 40,
@@ -94,6 +95,8 @@ def apply_style_cloak(
     Args:
         image_tensor: (1, 3, H, W) float tensor in [0, 1].
         model: Pre-trained classifier (eval mode, frozen params).
+               When a list is provided (ensemble), the first model is used
+               for feature-space optimization (hooks are model-specific).
         epsilon: Max per-pixel deviation from original (hard clamp).
         lam: Regularization strength. Higher = less pixel change.
         num_iterations: Adam optimizer steps.
@@ -107,10 +110,13 @@ def apply_style_cloak(
     if device is None:
         device = image_tensor.device
 
+    # Style cloaking uses feature hooks — use primary model for optimization
+    primary_model = model[0] if isinstance(model, list) else model
+
     original = image_tensor.clone().detach().to(device)
 
     # Set up feature extraction hook
-    extract_features, remove_hook = _get_feature_hook(model, layer_name="layer3")
+    extract_features, remove_hook = _get_feature_hook(primary_model, layer_name="layer3")
 
     try:
         # Get original features (target to move AWAY from)

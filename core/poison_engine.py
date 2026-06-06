@@ -16,10 +16,12 @@ from PIL import Image
 from core.presets import PRESETS
 from core.utils import pil_to_tensor, tensor_to_pil, downscale_if_needed
 from core.fgsm_poison import apply_fgsm
+from core.pgd_poison import apply_pgd
 from core.style_cloak import apply_style_cloak
 from core.nightshade_poison import apply_nightshade
 from core.noise_patterns import apply_noise_patterns
 from core.metadata_poison import apply_metadata_poison
+from core.visual_masking import compute_complexity_map, apply_visual_masking
 from core.quality_gate import (
     check_quality,
     reduce_settings_for_retry,
@@ -36,6 +38,11 @@ class PoisonSettings:
     # FGSM
     fgsm_enabled: bool = True
     fgsm_epsilon: float = 0.01
+
+    # PGD (Iterative Gradient)
+    pgd_enabled: bool = True
+    pgd_epsilon: float = 0.01
+    pgd_steps: int = 10
 
     # Style Cloak
     style_cloak_enabled: bool = True
@@ -64,6 +71,14 @@ class PoisonSettings:
     output_format: str = "png"
     model_name: str = "resnet18"
     multi_pass: bool = False
+
+    # Ensemble models
+    ensemble_enabled: bool = False
+    ensemble_models: list = field(default_factory=lambda: ["resnet18", "mobilenet"])
+
+    # Visual masking (adaptive per-region scaling)
+    visual_masking_enabled: bool = False
+    visual_masking_strength: float = 0.3
 
     # Quality gate
     quality_gate_enabled: bool = True
@@ -113,19 +128,42 @@ class PoisonEngine:
             self._model_cache[name] = get_model(name, self._device)
         return self._model_cache[name]
 
+    def _get_models(self, settings: PoisonSettings) -> list:
+        """Get list of models for ensemble or single-model processing."""
+        if settings.ensemble_enabled and len(settings.ensemble_models) > 1:
+            models = []
+            for name in settings.ensemble_models:
+                models.append(self._get_model(name))
+            return models
+        return [self._get_model(settings.model_name)]
+
     def _apply_techniques(
         self,
         image_tensor: torch.Tensor,
         settings: PoisonSettings,
         model: torch.nn.Module,
+        progress_callback=None,
     ) -> tuple:
         """Apply all enabled techniques sequentially. Returns (tensor, list_of_applied)."""
         current = image_tensor.clone()
         applied = []
 
+        # Build model list for ensemble support
+        models_arg = self._get_models(settings) if settings.ensemble_enabled else model
+
+        # Compute visual complexity map for adaptive region scaling
+        weight_map = None
+        if settings.visual_masking_enabled:
+            weight_map = compute_complexity_map(
+                image_tensor,
+                min_weight=settings.visual_masking_strength,
+            )
+            applied.append("Adaptive Region Scaling")
+
         # Count enabled techniques for epsilon scaling
         n_enabled = sum([
             settings.fgsm_enabled,
+            settings.pgd_enabled,
             settings.style_cloak_enabled,
             settings.nightshade_enabled,
             settings.noise_enabled,
@@ -135,14 +173,42 @@ class PoisonEngine:
         # 1. FGSM
         if settings.fgsm_enabled:
             eff_eps = settings.fgsm_epsilon / scale
-            current = apply_fgsm(current, model, epsilon=eff_eps, device=self._device)
+            if progress_callback:
+                progress_callback(0.1, f"Applying FGSM adversarial noise (\u03b5={eff_eps:.4f})...")
+            before = current.clone()
+            current = apply_fgsm(current, models_arg, epsilon=eff_eps, device=self._device)
+            if weight_map is not None:
+                perturbation = current - before
+                masked_perturbation = apply_visual_masking(perturbation, weight_map)
+                current = torch.clamp(before + masked_perturbation, 0.0, 1.0)
             applied.append("FGSM Adversarial Noise")
 
-        # 2. Style Cloak
+        # 2. PGD (Iterative Gradient)
+        if settings.pgd_enabled:
+            eff_eps = settings.pgd_epsilon / scale
+            if progress_callback:
+                progress_callback(0.2, f"Applying PGD iterative perturbation ({settings.pgd_steps} steps, \u03b5={eff_eps:.4f})...")
+            before = current.clone()
+            current = apply_pgd(
+                current, models_arg,
+                epsilon=eff_eps,
+                num_steps=settings.pgd_steps,
+                device=self._device,
+            )
+            if weight_map is not None:
+                perturbation = current - before
+                masked_perturbation = apply_visual_masking(perturbation, weight_map)
+                current = torch.clamp(before + masked_perturbation, 0.0, 1.0)
+            applied.append("PGD Iterative Perturbation")
+
+        # 3. Style Cloak
         if settings.style_cloak_enabled:
             eff_eps = settings.style_cloak_epsilon / scale
+            if progress_callback:
+                progress_callback(0.35, f"Applying style cloak ({settings.style_cloak_iterations} iterations)...")
+            before = current.clone()
             current = apply_style_cloak(
-                current, model,
+                current, models_arg,
                 epsilon=eff_eps,
                 lam=settings.style_cloak_lambda,
                 num_iterations=settings.style_cloak_iterations,
@@ -150,23 +216,36 @@ class PoisonEngine:
                 device=self._device,
                 min_psnr=settings.quality_gate_psnr if settings.quality_gate_enabled else 0.0,
             )
+            if weight_map is not None:
+                perturbation = current - before
+                masked_perturbation = apply_visual_masking(perturbation, weight_map)
+                current = torch.clamp(before + masked_perturbation, 0.0, 1.0)
             applied.append("Style Cloak")
 
-        # 3. Nightshade
+        # 4. Nightshade
         if settings.nightshade_enabled:
             eff_eps = settings.nightshade_epsilon / scale
+            if progress_callback:
+                progress_callback(0.55, f"Applying prompt poison ({settings.nightshade_targets} targets, \u03b5={eff_eps:.4f})...")
+            before = current.clone()
             current = apply_nightshade(
-                current, model,
+                current, models_arg,
                 epsilon=eff_eps,
                 num_targets=settings.nightshade_targets,
                 device=self._device,
                 multi_pass=settings.multi_pass,
             )
+            if weight_map is not None:
+                perturbation = current - before
+                masked_perturbation = apply_visual_masking(perturbation, weight_map)
+                current = torch.clamp(before + masked_perturbation, 0.0, 1.0)
             applied.append("Prompt Poison")
 
-        # 4. Noise Patterns (no model needed)
+        # 5. Noise Patterns (no model needed)
         if settings.noise_enabled:
             eff_amp = settings.noise_amplitude / scale
+            if progress_callback:
+                progress_callback(0.7, f"Applying high-frequency noise (amplitude={eff_amp:.4f})...")
             current = apply_noise_patterns(
                 current,
                 amplitude=eff_amp,
@@ -221,7 +300,8 @@ class PoisonEngine:
             if progress_callback:
                 progress_callback(0.1, "Applying techniques (quality gate bypassed)...")
             perturbed_tensor, applied = self._apply_techniques(
-                image_tensor, current_settings, model
+                image_tensor, current_settings, model,
+                progress_callback=progress_callback,
             )
             warnings.append(
                 "Quality gate was bypassed. Output may have visible artifacts."
@@ -232,7 +312,8 @@ class PoisonEngine:
                     progress_callback(0.1, f"Applying techniques (attempt {attempt + 1})...")
 
                 perturbed_tensor, applied = self._apply_techniques(
-                    image_tensor, current_settings, model
+                    image_tensor, current_settings, model,
+                    progress_callback=progress_callback,
                 )
 
                 # Quality gate check

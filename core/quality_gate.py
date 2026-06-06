@@ -88,6 +88,7 @@ def reduce_settings_for_retry(settings_dict: dict) -> dict:
     reduced = settings_dict.copy()
     reduction_keys = [
         "fgsm_epsilon",
+        "pgd_epsilon",
         "style_cloak_epsilon",
         "nightshade_epsilon",
         "noise_amplitude",
@@ -95,4 +96,10 @@ def reduce_settings_for_retry(settings_dict: dict) -> dict:
     for key in reduction_keys:
         if key in reduced:
             reduced[key] = reduced[key] * 0.5
+
+    # Increase visual masking min_weight on retry (make masking less aggressive)
+    if "visual_masking_strength" in reduced:
+        reduced["visual_masking_strength"] = min(
+            0.8, reduced["visual_masking_strength"] * 1.5
+        )
     return reduced

@@ -14,6 +14,7 @@ Multiple semantically distant targets can be applied in sequence.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Union, List
 
 from core.utils import IMAGENET_MEAN, IMAGENET_STD
 
@@ -93,32 +94,43 @@ def _pick_target_classes(true_class: int, num_targets: int, model: nn.Module,
 
 def _targeted_fgsm_step(
     image_tensor: torch.Tensor,
-    model: nn.Module,
+    model: Union[nn.Module, List[nn.Module]],
     target_class: int,
     epsilon: float,
     device: torch.device,
 ) -> torch.Tensor:
-    """Single targeted FGSM step: pull image toward target_class."""
-    data = image_tensor.clone().detach().to(device).requires_grad_(True)
-    normalized = _normalize_on_device(data, device)
-    output = model(normalized)
+    """Single targeted FGSM step: pull image toward target_class.
 
+    Supports ensemble: when model is a list, averages gradient signs across
+    all models for better cross-model transferability.
+    """
+    models_list = model if isinstance(model, list) else [model]
+
+    ensemble_grad = torch.zeros_like(image_tensor)
     target_tensor = torch.tensor([target_class], device=device)
-    loss = F.cross_entropy(output, target_tensor)
 
-    model.zero_grad()
-    loss.backward()
+    for m in models_list:
+        data = image_tensor.clone().detach().to(device).requires_grad_(True)
+        normalized = _normalize_on_device(data, device)
+        output = m(normalized)
 
-    # Subtract gradient: pull image TOWARD the target class
-    data_grad = data.grad.data
-    perturbed = data - epsilon * data_grad.sign()
+        loss = F.cross_entropy(output, target_tensor)
+        m.zero_grad()
+        loss.backward()
+
+        if data.grad is not None:
+            ensemble_grad += data.grad.data.sign()
+
+    # Average gradient signs and subtract (pull toward target class)
+    ensemble_grad = ensemble_grad / len(models_list)
+    perturbed = image_tensor.to(device) - epsilon * ensemble_grad.sign()
     perturbed = torch.clamp(perturbed, 0.0, 1.0)
     return perturbed.detach()
 
 
 def apply_nightshade(
     image_tensor: torch.Tensor,
-    model: nn.Module,
+    model: Union[nn.Module, List[nn.Module]],
     epsilon: float = 0.01,
     num_targets: int = 2,
     device: torch.device = None,
@@ -130,6 +142,8 @@ def apply_nightshade(
     Args:
         image_tensor: (1, 3, H, W) float tensor in [0, 1].
         model: Pre-trained classifier (eval mode, frozen params).
+               Can be a single model or a list of models for ensemble
+               gradient averaging.
         epsilon: Perturbation magnitude per target.
         num_targets: Number of semantically distant target classes.
         device: torch device.
@@ -141,18 +155,22 @@ def apply_nightshade(
     if device is None:
         device = image_tensor.device
 
+    # Use first model for classification (target picking)
+    models_list = model if isinstance(model, list) else [model]
+    primary_model = models_list[0]
+
     current = image_tensor.clone().to(device)
     original = image_tensor.clone().to(device)
 
-    # Classify original image
-    true_class = _classify(model, current, device)
+    # Classify original image using the primary model
+    true_class = _classify(primary_model, current, device)
     target_classes = _pick_target_classes(true_class, num_targets, model, current, device)
 
     # Scale epsilon by sqrt(n_targets) to keep total perturbation bounded
     effective_epsilon = epsilon / max(1, num_targets ** 0.5)
 
     for target_class in target_classes:
-        current = _targeted_fgsm_step(current, model, target_class, effective_epsilon, device)
+        current = _targeted_fgsm_step(current, models_list, target_class, effective_epsilon, device)
         # Re-clamp to original ± epsilon to prevent visible drift
         current = torch.clamp(current, original - epsilon, original + epsilon)
         current = torch.clamp(current, 0.0, 1.0)
